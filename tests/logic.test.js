@@ -10,9 +10,9 @@ t('default state: A first, lb, increments 5 / DL 10', () => {
   assert.equal(s.nextWorkout, 'A'); assert.equal(s.units, 'lb');
   assert.equal(s.lifts.squat.inc, 5); assert.equal(s.lifts.deadlift.inc, 10);
 });
-t('workouts: A=SQ/BP/ROW 5x5, B=SQ/OHP/DL with DL 1x5', () => {
+t('workouts: A=SQ/BP/DB ROW 5x5, B=SQ/OHP/DL with DL 1x5', () => {
   const s = AF.defaultState();
-  const a = AF.newSession(s); assert.deepEqual(a.lifts.map(e => e.lift), ['squat', 'bench', 'row']);
+  const a = AF.newSession(s); assert.deepEqual(a.lifts.map(e => e.lift), ['squat', 'bench', 'dbrow']);
   a.lifts.forEach(e => assert.equal(e.sets.length, 5));
   AF.applySession(s, sess(s, all5));
   const b = AF.newSession(s); assert.equal(b.workout, 'B');
@@ -53,9 +53,9 @@ t('deload never below the empty bar', () => {
   assert.equal(s.lifts.ohp.weight, 45);
 });
 t('progression uses the weight actually lifted (manual edit)', () => {
-  const s = AF.defaultState(); s.lifts.row.weight = 100;
-  const x = AF.newSession(s); x.lifts.forEach(e => e.sets = all5(e)); x.lifts[2].weight = 90;
-  AF.applySession(s, x); assert.equal(s.lifts.row.weight, 95);
+  const s = AF.defaultState(); s.lifts.bench.weight = 100;
+  const x = AF.newSession(s); x.lifts.forEach(e => e.sets = all5(e)); x.lifts[1].weight = 90;
+  AF.applySession(s, x); assert.equal(s.lifts.bench.weight, 95);
 });
 t('unlogged/partial sets are a fail', () => {
   assert.equal(AF.isSuccess({ reps: 5, setsTarget: 5, sets: [5, 5, 5, 5, null] }), false);
@@ -95,4 +95,5 @@ t('backup round-trip via JSON + normalize; rejects junk', () => {
   assert.equal(back.history.length, 1); assert.equal(back.lifts.squat.weight, 50);
   assert.throws(() => AF.normalize({ foo: 1 }));
 });
+require('./logic.v2.test.js')(t, AF, assert, sess, all5);
 console.log(n + ' tests passed');

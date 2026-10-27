@@ -48,7 +48,7 @@ const puppeteer = require('puppeteer-core');
   await p.reload({ waitUntil: 'domcontentloaded' });
   const offlineOk = await p.evaluate(() => !!document.querySelector('.tabs') && typeof AF === 'object');
   console.log(JSON.stringify({ errs, timerVisible, timerTxt, failTimer, fail2Timer,
-    after1: { squat: st.lifts.squat.weight, bench: st.lifts.bench, row: st.lifts.row.weight, next: st.nextWorkout, hist: st.history.length },
+    after1: { squat: st.lifts.squat.weight, bench: st.lifts.bench, dbrow: st.lifts.dbrow.weight, next: st.nextWorkout, hist: st.history.length },
     after3: { bench: st2.lifts.bench, hist: st2.history.length }, sw, offlineOk }, null, 1));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1); });

@@ -1,5 +1,5 @@
 /* Anchor Five service worker: cache-first app shell for full offline use. */
-var CACHE = 'anchorfive-v1.0.0';
+var CACHE = 'anchorfive-v2.0.0';
 var ASSETS = ['./', './index.html', './app.css', './logic.js', './app.js', './manifest.json',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png'];
 self.addEventListener('install', function (e) {
