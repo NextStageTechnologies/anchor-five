@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0b1424"/>
+  <rect x="16" y="16" width="480" height="480" rx="100" fill="none" stroke="#263a5e" stroke-width="8"/>
+  <g fill="none" stroke="#e3a72f" stroke-width="30" stroke-linecap="round">
+    <circle cx="256" cy="112" r="34"/>
+    <line x1="256" y1="146" x2="256" y2="408"/>
+    <path d="M118 318 Q140 420 256 420 Q372 420 394 318"/>
+  </g>
+  <g fill="#e3a72f">
+    <path d="M96 300 l44 -10 -14 48z"/><path d="M416 300 l-44 -10 14 48z"/>
+  </g>
+  <rect x="104" y="196" width="304" height="20" rx="10" fill="#e9eef7"/>
+  <rect x="120" y="164" width="26" height="84" rx="6" fill="#e9eef7"/>
+  <rect x="366" y="164" width="26" height="84" rx="6" fill="#e9eef7"/>
+  <rect x="150" y="178" width="18" height="56" rx="5" fill="#e9eef7"/>
+  <rect x="344" y="178" width="18" height="56" rx="5" fill="#e9eef7"/>
+  <text x="256" y="350" font-family="Helvetica,Arial,sans-serif" font-weight="800" font-size="110" fill="#ffcf6b" text-anchor="middle" stroke="#0b1424" stroke-width="10" paint-order="stroke">5</text>
+</svg>
