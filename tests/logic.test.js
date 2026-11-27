@@ -96,4 +96,5 @@ t('backup round-trip via JSON + normalize; rejects junk', () => {
   assert.throws(() => AF.normalize({ foo: 1 }));
 });
 require('./logic.v2.test.js')(t, AF, assert, sess, all5);
+require('./logic.continuity.test.js')(t, AF, assert, sess, all5);
 console.log(n + ' tests passed');
