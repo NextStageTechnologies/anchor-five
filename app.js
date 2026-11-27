@@ -37,6 +37,8 @@
   function u() { return S.units; }
   /* Display label for the unit: 'LBs' for pounds, 'kg' for kilograms (badge shows 'LBs' / 'KG'). */
   function UL() { return S.units === 'kg' ? 'kg' : 'LBs'; }
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+  function histW(session, weight) { return AF.convertWeight(weight, AF.sessionUnits(session), S.units); }
   function liftName(k) { return AF.LIFTS[k] ? AF.LIFTS[k].name : k; }
   function isDB(k) { return AF.isDumbbell(k); }
   function toast(msg, ms) {
@@ -105,28 +107,57 @@
     if (on && !wakeLock) navigator.wakeLock.request('screen').then(function (l) { wakeLock = l; l.addEventListener('release', function () { wakeLock = null; }); }).catch(function () {});
     if (!on && wakeLock) { wakeLock.release(); wakeLock = null; }
   }
-  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && (S.current || S.recoveryActive)) keepAwake(true); tickTimer(); tickRecovery(); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && (S.current || S.recoveryActive || S.restActive)) keepAwake(true); tickTimer(); tickRecovery(); });
 
   /* ---------------- rest timer ---------------- */
+  /* Persisted on S.restActive as {end, total, label, fired} so a reload or backgrounding can resume it,
+     the same way S.recoveryActive keeps the sauna/hot-tub countdown. */
   var T = { end: 0, total: 0, label: '', fired: false, iv: null };
-  function startTimer(sec, label) {
-    T.total = sec; T.end = Date.now() + sec * 1000; T.label = label; T.fired = false;
+  function persistTimer() {
+    if (T.end) S.restActive = { end: T.end, total: T.total, label: T.label, fired: !!T.fired };
+    else S.restActive = null;
+    save();
+  }
+  function showTimerUi() {
     $('#timer').classList.remove('hidden', 'over'); document.body.classList.add('timing');
     if (!T.iv) T.iv = setInterval(tickTimer, 250);
+  }
+  function startTimer(sec, label) {
+    T.total = sec; T.end = Date.now() + sec * 1000; T.label = label; T.fired = false;
+    showTimerUi();
     scheduleRest();
     tickTimer();
+    persistTimer();
   }
-  function stopTimer() { if (T.end && !T.fired) cancelNotice('rest'); clearInterval(T.iv); T.iv = null; T.end = 0; $('#timer').classList.add('hidden'); document.body.classList.remove('timing'); }
+  function stopTimer() {
+    if (T.end && !T.fired) cancelNotice('rest');
+    clearInterval(T.iv); T.iv = null; T.end = 0; T.fired = false;
+    $('#timer').classList.add('hidden'); document.body.classList.remove('timing');
+    if (S.restActive) persistTimer(); // clears restActive and saves
+  }
+  function resumeTimer() {
+    var r = S.restActive;
+    if (!r || !r.end || !S.current) {
+      if (S.restActive && !S.current) { S.restActive = null; save(); }
+      return;
+    }
+    T.end = r.end; T.total = r.total || 90; T.label = r.label || 'Rest'; T.fired = !!r.fired;
+    showTimerUi();
+    if (!T.fired) scheduleRest();
+    tickTimer();
+  }
   function tickTimer() {
     if (!T.end) return;
     var left = Math.round((T.end - Date.now()) / 1000);
     var el = $('#timer');
+    if (!el) return;
     if (left <= 0) {
       if (!T.fired) {
         T.fired = true;
         // On time (screen on, app open): chime. Long overdue (we were in the background): the
         // local notification already alerted, so don't play a late chime.
         if (-left <= 5) alertDone('rest'); else cancelNotice('rest');
+        persistTimer();
       }
       el.classList.add('over');
       $('#timerLabel').textContent = 'Rest over — next set';
@@ -141,9 +172,10 @@
     }
   }
   function mmss(s) { s = Math.max(0, s); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+  function clockMs(ms) { return mmss(Math.ceil(ms / 1000)); }
   function scheduleRest() { var left = (T.end - Date.now()) / 1000; if (left > 1) scheduleNotice('rest', left, 'Rest is over', 'Time for your next set.'); else cancelNotice('rest'); }
-  $('#tPlus').onclick = function () { if (T.end) { T.end += 15000; T.total += 15; T.fired = false; scheduleRest(); tickTimer(); } };
-  $('#tMinus').onclick = function () { if (T.end) { T.end -= 15000; scheduleRest(); tickTimer(); } };
+  $('#tPlus').onclick = function () { if (T.end) { T.end += 15000; T.total += 15; T.fired = false; scheduleRest(); tickTimer(); persistTimer(); } };
+  $('#tMinus').onclick = function () { if (T.end) { T.end -= 15000; scheduleRest(); tickTimer(); persistTimer(); } };
   $('#tSkip').onclick = stopTimer;
 
   /* ---------------- plates graphic ---------------- */
@@ -167,10 +199,41 @@
   }
 
   /* ---------------- TRAIN ---------------- */
+  function recoveryInProgress() {
+    var R = S.recoveryActive; if (!R || !R.cd) return false;
+    return AF.cdRunning(R.cd) || AF.cdElapsed(R.cd, Date.now()) > 0;
+  }
+  function recoveryBannerLabel() {
+    var R = S.recoveryActive; if (!R) return '';
+    var name = AF.RECOVERY[R.type].name;
+    var now = Date.now();
+    if (AF.cdRunning(R.cd)) return name + ' · ' + clockMs(AF.cdRemaining(R.cd, now)) + ' left — tap to open';
+    if (AF.cdElapsed(R.cd, now) > 0) return name + ' timer paused — tap to open';
+    return name + ' timer ready — tap to open';
+  }
+  function recoveryBannerHtml() {
+    if (!S.recoveryActive) return '';
+    return '<button class="chip recov-live" id="recovBanner" type="button">' + recoveryBannerLabel() + '</button>';
+  }
+  function bindRecoveryBanner() {
+    var b = $('#recovBanner'); if (b) b.onclick = function () { openRecovery(null); };
+    ensureRecoveryTick();
+  }
+  function ensureRecoveryTick() {
+    if (S.recoveryActive && !RIV) RIV = setInterval(tickRecovery, 250);
+  }
+  function beginWorkout(make) {
+    unlockAudio();
+    if (recoveryInProgress()) {
+      var name = AF.RECOVERY[S.recoveryActive.type].name;
+      if (!confirm(name + ' timer is still running. Start the workout anyway? The timer will keep going — tap the ' + name.toLowerCase() + ' banner to get back to it.')) return;
+    }
+    S.current = make(); openWarm = {}; save(); keepAwake(true); render(); window.scrollTo(0, 0);
+  }
   function renderTrain() {
     if (!S.current) return renderPreview();
     var c = S.current;
-    var html = '<div class="hero"><div><div class="w">In progress</div><div class="big">' + sessionTitle(c) + '</div></div>' +
+    var html = recoveryBannerHtml() + '<div class="hero"><div><div class="w">In progress</div><div class="big">' + sessionTitle(c) + '</div></div>' +
       '<div class="pill" id="elapsed">' + elapsed(c) + '</div></div>';
     c.lifts.forEach(function (e, li) {
       var L = S.lifts[e.lift];
@@ -211,6 +274,7 @@
     html += '<button class="btn ghost sm" id="addEx">+ Add exercise from library</button>';
     html += '<button class="btn" id="finish">Finish workout</button><button class="btn ghost sm" id="discard">Discard workout</button>';
     view.innerHTML = html;
+    bindRecoveryBanner();
     $('#addEx').onclick = function () { openLibrary({ kind: 'session' }); };
     view.querySelectorAll('[data-aw]').forEach(function (b) { b.onclick = function () { editAccWeight(c.accessories[+b.dataset.aw]); }; });
     view.querySelectorAll('[data-arm]').forEach(function (b) {
@@ -307,7 +371,7 @@
 
   function renderPreview() {
     var w = S.nextWorkout;
-    var html = '<div class="hero"><div><div class="w">Up next</div><div class="big">Workout <span>' + w + '</span></div></div>' +
+    var html = recoveryBannerHtml() + '<div class="hero"><div><div class="w">Up next</div><div class="big">Workout <span>' + w + '</span></div></div>' +
       '<div class="seg" style="width:110px"><button data-nw="A" class="' + (w === 'A' ? 'on' : '') + '">A</button><button data-nw="B" class="' + (w === 'B' ? 'on' : '') + '">B</button></div></div>';
     AF.WORKOUTS[w].forEach(function (k) {
       var L = S.lifts[k], d = AF.LIFTS[k], db = isDB(k);
@@ -332,14 +396,15 @@
     else {
       var last = S.history[S.history.length - 1];
       var days = Math.floor((Date.now() - new Date(last.date).getTime()) / 86400000);
-      html += '<div class="note" style="margin-top:14px">Last session: ' + esc(sessionName(last)) + ', ' + (days === 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago') + ' · ' + S.history.length + ' total</div>';
+      html += '<div class="note" style="margin-top:14px">Last session: ' + esc(sessionName(last)) + ', ' + (days === 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago') + ' · ' + plural(S.history.length, 'session') + ' total</div>';
     }
     view.innerHTML = html;
+    bindRecoveryBanner();
     view.querySelectorAll('[data-nw]').forEach(function (b) { b.onclick = function () { S.nextWorkout = b.dataset.nw; save(); render(); }; });
     view.querySelectorAll('[data-pw]').forEach(function (b) { b.onclick = function () { editWeight(b.dataset.pw, false); }; });
-    $('#start').onclick = function () { unlockAudio(); S.current = AF.newSession(S); openWarm = {}; save(); keepAwake(true); render(); window.scrollTo(0, 0); };
+    $('#start').onclick = function () { beginWorkout(function () { return AF.newSession(S); }); };
     view.querySelectorAll('[data-sd]').forEach(function (b) {
-      b.onclick = function () { unlockAudio(); S.current = AF.newCustomSession(S, b.dataset.sd); openWarm = {}; save(); keepAwake(true); render(); window.scrollTo(0, 0); };
+      b.onclick = function () { var id = b.dataset.sd; beginWorkout(function () { return AF.newCustomSession(S, id); }); };
     });
     view.querySelectorAll('[data-ed]').forEach(function (b) { b.onclick = function () { editDay(b.dataset.ed); }; });
     view.querySelectorAll('[data-ad]').forEach(function (b) { b.onclick = function () { openLibrary({ kind: 'day', id: b.dataset.ad }); }; });
@@ -406,7 +471,7 @@
   function renderHistory() {
     var recs = S.recoveryLog || [];
     if (!S.history.length && !recs.length) { view.innerHTML = '<div class="empty">No sessions yet.<br>Finish a workout and it shows up here.</div>'; return; }
-    var html = '<h2>' + S.history.length + ' sessions' + (recs.length ? ' · ' + recs.length + ' recovery' : '') + '</h2>';
+    var html = '<h2>' + plural(S.history.length, 'session') + (recs.length ? ' · ' + plural(recs.length, 'recovery', 'recoveries') : '') + '</h2>';
     var items = S.history.map(function (h) { return { t: new Date(h.date).getTime(), h: h }; })
       .concat(recs.map(function (r) { return { t: new Date(r.date).getTime() + 1, r: r }; }))
       .sort(function (a, b) { return b.t - a.t; });
@@ -425,10 +490,10 @@
         '<button class="chip" data-del="' + h.id + '">Delete</button></div><div class="hist-lifts">' +
         h.lifts.map(function (e) {
           var ok = AF.isSuccess(e);
-          return '<div><span>' + liftName(e.lift) + ' ' + fmt(e.weight) + (isDB(e.lift) ? ' ea' : '') + '</span><span class="' + (ok ? 'ok' : 'bad') + '">' + e.sets.join('/') + '</span></div>';
+          return '<div><span>' + liftName(e.lift) + ' ' + fmt(histW(h, e.weight)) + (isDB(e.lift) ? ' ea' : '') + '</span><span class="' + (ok ? 'ok' : 'bad') + '">' + e.sets.join('/') + '</span></div>';
         }).join('') +
         (h.accessories || []).map(function (a) {
-          return '<div class="muted"><span>' + esc(a.name) + (a.weight ? ' ' + fmt(a.weight) : '') + '</span><span>' + a.sets.map(function (x) { return x === null ? '–' : x; }).join('/') + '</span></div>';
+          return '<div class="muted"><span>' + esc(a.name) + (a.weight ? ' ' + fmt(histW(h, a.weight)) : '') + '</span><span>' + a.sets.map(function (x) { return x === null ? '–' : x; }).join('/') + '</span></div>';
         }).join('') + '</div></div>';
     });
     html += '<div class="note">Deleting a session removes it from your log and charts; it does not change your current working weights (edit those in Setup).</div>';
@@ -458,7 +523,12 @@
     }).join('') + '</div>';
     var pts = [];
     S.history.forEach(function (h) {
-      h.lifts.forEach(function (e) { if (e.lift === progLift) pts.push({ d: new Date(h.date), w: e.weight, e1: AF.entryE1rm(e), ok: AF.isSuccess(e) }); });
+      h.lifts.forEach(function (e) {
+        if (e.lift !== progLift) return;
+        var w = histW(h, e.weight);
+        var e1 = AF.entryE1rm(e);
+        pts.push({ d: new Date(h.date), w: w, e1: e1 ? histW(h, e1) : 0, ok: AF.isSuccess(e) });
+      });
     });
     pts.sort(function (a, b) { return a.d - b.d; });
     html += '<div class="card"><div class="ex-name">' + liftName(progLift) + '</div>';
@@ -470,7 +540,7 @@
       '<div class="stat"><b>' + (best ? fmt(best) : '—') + '</b><span>Best e1RM</span></div>' +
       '<div class="stat"><b>' + (gain >= 0 ? '+' : '') + fmt(gain) + '</b><span>Gained</span></div></div></div>';
     // totals
-    var vol = 0; S.history.forEach(function (h) { h.lifts.forEach(function (e) { e.sets.forEach(function (r) { vol += (r || 0) * e.weight * (isDB(e.lift) ? 2 : 1); }); }); });
+    var vol = 0; S.history.forEach(function (h) { h.lifts.forEach(function (e) { e.sets.forEach(function (r) { vol += (r || 0) * histW(h, e.weight) * (isDB(e.lift) ? 2 : 1); }); }); });
     html += '<div class="card"><div class="stats"><div class="stat"><b>' + S.history.length + '</b><span>Sessions</span></div>' +
       '<div class="stat"><b>' + (vol >= 10000 ? fmt(Math.round(vol / 100) / 10) + 'k' : fmt(vol)) + '</b><span>Total <i class="u">' + UL() + '</i></span></div>' +
       '<div class="stat"><b>' + streakWeeks() + '</b><span>Week streak</span></div></div></div>';
@@ -539,7 +609,7 @@
       '<h2>Lifts — next working weight & increment</h2><div class="card">';
     AF.PROGRAM_LIFTS.forEach(function (k) {
       html += '<div class="grid2" style="margin-bottom:10px;grid-template-columns:1.4fr 1fr 1fr;align-items:end"><div><b>' + liftName(k) + '</b>' + (isDB(k) ? '<div class="note" style="margin:2px 0">per dumbbell</div>' : '') +
-        (S.lifts[k].fails ? '<div class="note bad" style="margin:2px 0">' + S.lifts[k].fails + ' miss(es) <a href="#" data-rf="' + k + '" style="color:var(--brass2)">reset</a></div>' : '') + '</div>' +
+        (S.lifts[k].fails ? '<div class="note bad" style="margin:2px 0">' + plural(S.lifts[k].fails, 'miss', 'misses') + ' <a href="#" data-rf="' + k + '" style="color:var(--brass2)">reset</a></div>' : '') + '</div>' +
         '<div class="field"><label>Weight</label><input data-lw="' + k + '" type="number" inputmode="decimal" step="any" value="' + fmt(S.lifts[k].weight) + '"></div>' +
         '<div class="field"><label>+ per win</label><input data-li="' + k + '" type="number" inputmode="decimal" step="any" value="' + fmt(S.lifts[k].inc) + '"></div></div>';
     });
@@ -581,7 +651,7 @@
         AF.convertUnits(S, b.dataset.u); toolW = null; save(); render();
       };
     });
-    var num = function (el, fn) { el.onchange = function () { var v = +el.value; if (isFinite(v) && v >= 0) { fn(v); save(); render(); } else render(); }; };
+    var num = function (el, fn) { el.onchange = function () { var v = +el.value; if (isFinite(v) && v >= 0) { fn(v); save(); } }; };
     view.querySelectorAll('[data-lw]').forEach(function (el) { num(el, function (v) { S.lifts[el.dataset.lw].weight = v; }); });
     view.querySelectorAll('[data-li]').forEach(function (el) { num(el, function (v) { S.lifts[el.dataset.li].inc = v; }); });
     view.querySelectorAll('[data-rf]').forEach(function (a) { a.onclick = function (e) { e.preventDefault(); S.lifts[a.dataset.rf].fails = 0; save(); render(); }; });
@@ -603,9 +673,9 @@
       });
     };
     acc('an', function (el, list, i) { el.onchange = function () { list[i].name = el.value.trim() || 'Accessory'; save(); }; });
-    acc('as', function (el, list, i) { el.onchange = function () { list[i].sets = Math.max(1, Math.min(10, Math.round(+el.value) || 3)); save(); render(); }; });
-    acc('ar', function (el, list, i) { el.onchange = function () { list[i].reps = Math.max(1, Math.round(+el.value) || 10); save(); render(); }; });
-    acc('aw', function (el, list, i) { el.onchange = function () { list[i].weight = Math.max(0, +el.value || 0); save(); render(); }; });
+    acc('as', function (el, list, i) { el.onchange = function () { list[i].sets = Math.max(1, Math.min(10, Math.round(+el.value) || 3)); el.value = list[i].sets; save(); }; });
+    acc('ar', function (el, list, i) { el.onchange = function () { list[i].reps = Math.max(1, Math.round(+el.value) || 10); el.value = list[i].reps; save(); }; });
+    acc('aw', function (el, list, i) { el.onchange = function () { list[i].weight = Math.max(0, +el.value || 0); el.value = fmt(list[i].weight); save(); }; });
     acc('ax', function (el, list, i) { el.onclick = function () { list.splice(i, 1); save(); render(); }; });
     view.querySelectorAll('[data-aa]').forEach(function (b) {
       b.onclick = function () { (S.accessories[b.dataset.aa] = S.accessories[b.dataset.aa] || []).push({ name: 'New exercise', sets: 3, reps: 10, weight: 0 }); save(); render(); };
@@ -618,8 +688,8 @@
       rd.onload = function () {
         try {
           var obj = AF.normalize(JSON.parse(rd.result));
-          if (!confirm('Replace current data with this backup (' + obj.history.length + ' sessions)?')) return;
-          obj.deletedIds = (obj.deletedIds || []).concat(S.deletedIds || []);
+          if (!confirm('Replace current data with this backup (' + plural(obj.history.length, 'session') + ')?')) return;
+          obj.deletedIds = AF.importTombstones(S, obj);
           S = obj; save(); toast('Backup restored'); render();
         } catch (err) { alert('Import failed: ' + err.message); }
       };
@@ -723,7 +793,6 @@
     }
     tab = 'recovery'; render(); window.scrollTo(0, 0);
   }
-  function clockMs(ms) { return mmss(Math.ceil(ms / 1000)); }
   function renderRecovery() {
     var R = S.recoveryActive; if (!R) { tab = 'train'; return renderTrain(); }
     var cfg = AF.RECOVERY[R.type], now = Date.now(), running = AF.cdRunning(R.cd), started = running || AF.cdElapsed(R.cd, now) > 0;
@@ -776,6 +845,7 @@
       $('#rTime').textContent = clockMs(AF.cdRemaining(R.cd, now));
       $('#rBar').style.width = (100 * AF.cdElapsed(R.cd, now) / R.cd.duration).toFixed(1) + '%';
     }
+    var ban = $('#recovBanner'); if (ban) ban.textContent = recoveryBannerLabel();
     if (AF.cdRunning(R.cd) && AF.cdDone(R.cd, now)) {
       var overdue = now - (R.cd.startedAt + R.cd.duration - R.cd.elapsed);
       if (overdue <= 5000) alertDone('recovery'); else cancelNotice('recovery'); // late = notification already alerted
@@ -809,9 +879,12 @@
   document.querySelectorAll('.tabs button').forEach(function (b) {
     b.onclick = function () { tab = b.dataset.tab; render(); window.scrollTo(0, 0); };
   });
+  if (S.current) tab = 'train';
+  else if (S.recoveryActive) tab = 'recovery';
   render();
-  if (S.current || S.recoveryActive) keepAwake(true);
-  if (S.recoveryActive) { tab = 'recovery'; render(); }
+  if (S.current || S.recoveryActive || S.restActive) keepAwake(true);
+  resumeTimer();
+  ensureRecoveryTick();
   native('afSync', { action: 'pull' }); // iOS app: fetch iCloud copy + status
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {

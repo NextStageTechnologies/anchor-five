@@ -12,7 +12,7 @@ A no-frills, offline strength tracker built around two alternating 5×5 workouts
 
 ## Features
 - Tap a set to log it: 5 → 4 → 3 → 2 → 1 → 0 → clear
-- Rest timer starts on its own: 90 s after a good set, 3 min after a miss, 5 min after a second miss (change these in Setup). Plays a chime when time's up, and vibrates on Android. In the iOS app the chime dims (ducks) your music instead of stopping it, and a notification backs it up if the app isn't open.
+- Rest timer starts on its own: 90 s after a good set, 3 min after a miss, 5 min after a second miss (change these in Setup). It is saved with the workout, so a reload or a trip to another tab still shows the same countdown. Plays a chime when time's up, and vibrates on Android. In the iOS app the chime dims (ducks) your music instead of stopping it, and a notification backs it up if the app isn't open.
 - Exercise library (v2): Free Weights / Cable Machine toggle; add an exercise to today's workout or to Workout A/B, or build your own extra days
 - Sauna / hot tub recovery timer after a workout (sauna 15 min, hot tub 12 min by default, adjustable), with start/pause/reset and a chime at the end; sessions show in the log
 - Upgrading from v1: Barbell Row history is kept (shown as "Barbell Row"); the new Dumbbell Row starts at half your last row weight per dumbbell, rounded down to 5 lb (115 lb row → 55 lb dumbbells)
@@ -21,7 +21,7 @@ A no-frills, offline strength tracker built around two alternating 5×5 workouts
 - Plate calculator (per side), with your own bar weight and plate set
 - Optional accessory exercises for Workout A and Workout B
 - Workout log, a progress chart for each lift, estimated 1RM (Epley), total volume, week streak
-- LBs / kg switch
+- LBs / kg switch (past sessions keep the weights you actually lifted and which unit they were in; the log and charts convert them for display)
 - Export/import a JSON backup
 - Works offline once it's been opened
 
@@ -49,10 +49,11 @@ Tips
 - Keep the ringer on if you want to hear the timer alert. iPhones don't let web apps vibrate.
 - iOS pauses web apps in the background, so the timer can't alert you while the phone is locked or you're in another app. The countdown is still correct when you come back.
 - Go to **Setup → Export JSON** now and then and save the file to Files/iCloud. Deleting the home-screen app also deletes its data.
-- Updating: upload the new files, then bump `CACHE` in `sw.js` so phones pick up the change.
+- Updating: upload the new files, then bump `CACHE` in `sw.js` so phones pick up the change. Current cache name: `anchorfive-v2.0.1`.
 
 ## Development
 - Files: `index.html`, `app.css`, `app.js` (UI), `logic.js` (program rules, no DOM), `sw.js`, `manifest.json`, `icons/`
 - Test locally: `python3 -m http.server 8000` and open http://localhost:8000
-- Logic tests: `node tests/logic.test.js` (runs `logic.v2.test.js` too)
+- Logic tests: `node tests/logic.test.js` (runs `logic.v2.test.js` and `logic.continuity.test.js` too)
+- Continuity browser tests (Playwright, iPhone viewport): `node tests/e2e.continuity.pw.js` (needs `playwright-core` and Chrome)
 - Browser tests (puppeteer-core + Chrome, server on :8765): `node tests/e2e.puppeteer.js`, `node tests/e2e.v2.puppeteer.js`

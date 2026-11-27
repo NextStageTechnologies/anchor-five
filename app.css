@@ -119,3 +119,5 @@ body.timing{padding-bottom:calc(200px + var(--safe-b))}
 .safety li{margin:3px 0}
 .recov-log b{color:#ff9f6b}
 .stat span .u{text-transform:none;font-style:normal}
+
+.recov-live{display:block;width:100%;text-align:center;margin:0 0 12px;padding:10px 12px;border-color:var(--brass);color:var(--brass2);background:rgba(227,167,47,.12)}

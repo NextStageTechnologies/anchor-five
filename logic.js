@@ -293,6 +293,7 @@
     return {
       id: Date.now().toString(36),
       date: new Date().toISOString(),
+      units: state.units,
       workout: w,
       lifts: WORKOUTS[w].map(function (k) {
         var n = LIFTS[k].sets;
@@ -306,7 +307,7 @@
   function newCustomSession(state, dayId) {
     var day = (state.customDays || []).filter(function (d) { return d.id === dayId; })[0];
     if (!day) throw new Error('No such custom day');
-    return { id: Date.now().toString(36), date: new Date().toISOString(), workout: 'C', dayId: day.id, dayName: day.name,
+    return { id: Date.now().toString(36), date: new Date().toISOString(), units: state.units, workout: 'C', dayId: day.id, dayName: day.name,
       lifts: [], accessories: day.items.map(accFromTemplate) };
   }
 
@@ -325,9 +326,37 @@
     return day;
   }
 
-  /** Switch units, converting all weights. */
+  /** Unit recorded on a session, or null if it was logged before units were stored. */
+  function sessionUnits(session) {
+    if (session && (session.units === 'kg' || session.units === 'lb')) return session.units;
+    return null;
+  }
+
+  /** Convert a weight between lb and kg. If from/to are missing or the same, the number is left as-is. */
+  function convertWeight(weight, from, to) {
+    var w = Number(weight);
+    if (!from || !to || from === to || !isFinite(w)) return weight;
+    var f = to === 'kg' ? 0.45359237 : 1 / 0.45359237;
+    var step = (UNIT_DEFAULTS[to] && UNIT_DEFAULTS[to].round) || 0.5;
+    return roundTo(w * f, step);
+  }
+
+  /** Tag untagged log entries with the unit they were actually lifted in, without changing the stored numbers. */
+  function stampHistoryUnits(state, units) {
+    if (units !== 'kg' && units !== 'lb') return state;
+    (state.history || []).forEach(function (h) { if (!sessionUnits(h)) h.units = units; });
+    return state;
+  }
+
+  function convertItemWeight(item, from, to) {
+    if (item && item.weight != null) item.weight = convertWeight(item.weight, from, to);
+  }
+
+  /** Switch units, converting current working weights. Past log entries keep their original numbers and a unit tag. */
   function convertUnits(state, to) {
     if (state.units === to) return state;
+    var from = state.units;
+    stampHistoryUnits(state, from);
     var f = to === 'kg' ? 0.45359237 : 1 / 0.45359237;
     var d = UNIT_DEFAULTS[to];
     Object.keys(state.lifts).forEach(function (k) {
@@ -343,6 +372,12 @@
     var conv = function (a) { a.weight = roundTo(a.weight * f, d.round / 2); };
     ['A', 'B'].forEach(function (w) { (state.accessories[w] || []).forEach(conv); });
     (state.customDays || []).forEach(function (day) { day.items.forEach(conv); });
+    // An in-progress session is happening now, so its working weights follow the new unit.
+    if (state.current) {
+      (state.current.lifts || []).forEach(function (e) { convertItemWeight(e, from, to); });
+      (state.current.accessories || []).forEach(function (a) { convertItemWeight(a, from, to); });
+      state.current.units = to;
+    }
     state.bar = d.bar;
     state.plates = d.plates.slice();
     state.units = to;
@@ -381,8 +416,10 @@
     Object.keys(LIFTS).forEach(function (k) {
       if (!obj.lifts[k]) { if (LIFTS[k].legacy) return; obj.lifts[k] = base.lifts[k]; }
       var def = base.lifts[k] || liftDefaults(k, UNIT_DEFAULTS[obj.units]);
-      obj.lifts[k].weight = Number(obj.lifts[k].weight) || def.weight;
-      obj.lifts[k].inc = Number(obj.lifts[k].inc) || def.inc;
+      var w = Number(obj.lifts[k].weight);
+      obj.lifts[k].weight = (isFinite(w) && w >= 0) ? w : def.weight;
+      var inc = Number(obj.lifts[k].inc);
+      obj.lifts[k].inc = (isFinite(inc) && inc >= 0) ? inc : def.inc;
       obj.lifts[k].fails = Number(obj.lifts[k].fails) || 0;
     });
     if (!obj.accessories || typeof obj.accessories !== 'object') obj.accessories = base.accessories;
@@ -409,7 +446,7 @@
   }
   // Compare only synced content: ignore timestamps and device-local state (in-progress workout / recovery timer).
   function stripVolatile(s) {
-    var c = JSON.parse(JSON.stringify(s)); delete c.lastModified; delete c.current; delete c.recoveryActive;
+    var c = JSON.parse(JSON.stringify(s)); delete c.lastModified; delete c.current; delete c.recoveryActive; delete c.restActive;
     c.deletedIds = (c.deletedIds || []).slice().sort(); return JSON.stringify(c);
   }
   function mergeStates(local, remote) {
@@ -421,6 +458,10 @@
     var out = JSON.parse(JSON.stringify(newer));
     var deadList = []; var deadSeen = {};
     (local.deletedIds || []).concat(remote.deletedIds || []).forEach(function (id) { if (!deadSeen[id]) { deadSeen[id] = 1; deadList.push(id); } });
+    // A newer copy that still has an item (e.g. after restoring a backup) un-tombstones it.
+    var kept = {};
+    collectEntryIds(newer).forEach(function (id) { kept[id] = 1; delete deadSeen[id]; });
+    deadList = deadList.filter(function (id) { return !kept[id]; });
     out.deletedIds = deadList.sort();
     out.history = byIdUnion(newer.history, older.history, deadSeen);
     out.recoveryLog = byIdUnion(newer.recoveryLog, older.recoveryLog, deadSeen);
@@ -430,10 +471,35 @@
     out.customDays = out.customDays.filter(function (d) { return !deadSeen[d.id]; });
     out.current = local.current || null; // in-progress workout belongs to this device
     if (local.recoveryActive) out.recoveryActive = local.recoveryActive; else delete out.recoveryActive; // device-local timer
+    if (local.restActive) out.restActive = local.restActive; else delete out.restActive; // device-local rest timer
     out.lastModified = Math.max(local.lastModified || 0, remote.lastModified || 0);
     var changed = stripVolatile(out) !== stripVolatile(local);
     // remoteStale: the cloud copy is missing something we have -> caller should save (push) the merged state.
     return { state: out, changed: changed, remoteStale: stripVolatile(out) !== stripVolatile(remote) };
+  }
+
+  function collectEntryIds(state) {
+    var ids = [];
+    (state.history || []).forEach(function (h) { if (h && h.id) ids.push(h.id); });
+    (state.recoveryLog || []).forEach(function (r) { if (r && r.id) ids.push(r.id); });
+    (state.customDays || []).forEach(function (d) { if (d && d.id) ids.push(d.id); });
+    return ids;
+  }
+
+  /**
+   * deletedIds to use when replacing local data with an imported backup, so an iCloud merge
+   * cannot bring back sessions the backup was meant to replace. Items in the backup are kept
+   * (and un-tombstoned if they had been deleted locally).
+   */
+  function importTombstones(local, imported) {
+    var keep = {};
+    collectEntryIds(imported).forEach(function (id) { keep[id] = 1; });
+    var seen = {}, out = [];
+    function add(id) { if (id && !keep[id] && !seen[id]) { seen[id] = 1; out.push(id); } }
+    (imported.deletedIds || []).forEach(add);
+    (local.deletedIds || []).forEach(add);
+    collectEntryIds(local).forEach(add);
+    return out.sort();
   }
 
   return {
@@ -447,6 +513,7 @@
     deloadWeight: deloadWeight, applySession: applySession, rememberAccessoryWeights: rememberAccessoryWeights,
     plateCalc: plateCalc, warmups: warmups, e1rm: e1rm, entryE1rm: entryE1rm,
     restFor: restFor, newSession: newSession, newCustomSession: newCustomSession, addExerciseToSession: addExerciseToSession,
-    addCustomDay: addCustomDay, convertUnits: convertUnits, migrateRow: migrateRow, normalize: normalize, mergeStates: mergeStates
+    addCustomDay: addCustomDay, convertUnits: convertUnits, migrateRow: migrateRow, normalize: normalize, mergeStates: mergeStates,
+    sessionUnits: sessionUnits, convertWeight: convertWeight, stampHistoryUnits: stampHistoryUnits, importTombstones: importTombstones
   };
 });
